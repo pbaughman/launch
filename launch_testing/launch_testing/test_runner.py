@@ -24,6 +24,7 @@ from launch.event_handlers import OnProcessExit
 from launch.event_handlers import OnProcessIO
 from launch.event_handlers import OnProcessStart
 
+from .actions import ReadyToTest
 from .io_handler import ActiveIoHandler
 from .parse_arguments import parse_launch_arguments
 from .proc_info_handler import ActiveProcInfoHandler
@@ -70,9 +71,32 @@ class _RunnerWorker():
         :return: A tuple of two unittest.Results - one for tests that ran while processes were
         active, and another set for tests that ran after processes were shutdown
         """
-        test_ld, test_context = self._test_run.normalized_test_description(
-            ready_fn=lambda: self._processes_launched.set()
-        )
+        test_ld, test_context = self._test_run.normalized_test_description()
+
+        # The launch description contains a ReadyToTest action used to delay the start
+        # of tests.
+        # Fish the ReadyToTest action out of the launch description and plumb our
+        # ready_fn to it
+        def iterate_ready_to_test_actions(entities):
+            """Recursively search LaunchDescription entities for all ReadyToTest actions."""
+            for entity in entities:
+                if isinstance(entity, ReadyToTest):
+                    yield entity
+                yield from iterate_ready_to_test_actions(
+                    entity.describe_sub_entities()
+                )
+                for conditional_sub_entity in entity.describe_conditional_sub_entities():
+                    yield from iterate_ready_to_test_actions(
+                        conditional_sub_entity[1]
+                    )
+
+        try:
+            ready_action = next(e for e in iterate_ready_to_test_actions(test_ld.entities))
+        except StopIteration:  # No ReadyToTest action found
+            raise Exception(
+                'No ReadyToTest action found in the launch description'
+            )
+        ready_action._add_callback(self._processes_launched.set)
 
         # Data that needs to be bound to the tests:
         proc_info = ActiveProcInfoHandler()
@@ -86,12 +110,6 @@ class _RunnerWorker():
 
         self._test_run.bind(
             self._test_run.pre_shutdown_tests,
-            injected_attributes={
-                'launch_service': self._launch_service,
-                'proc_info': proc_info,
-                'proc_output': proc_output,
-                'test_args': test_args,
-            },
             injected_args=dict(
                 full_context,
                 # Add a few more things to the args dictionary:
@@ -105,11 +123,6 @@ class _RunnerWorker():
         )
         self._test_run.bind(
             self._test_run.post_shutdown_tests,
-            injected_attributes={
-                'proc_info': proc_info._proc_info_handler,
-                'proc_output': proc_output._io_handler,
-                'test_args': test_args,
-            },
             injected_args=dict(
                 full_context,
                 # Add a few more things to the args dictionary:
@@ -292,8 +305,6 @@ class LaunchTestRunner(object):
 
             # Check for extra args in generate_test_description
             for argname in base_args:
-                if argname == 'ready_fn':
-                    continue
                 if argname not in run.param_args.keys():
                     raise Exception(
                         "generate_test_description has unexpected extra argument '{}'".format(
@@ -302,8 +313,4 @@ class LaunchTestRunner(object):
                     )
 
             # This is a double-check
-            try:
-                inspect.getcallargs(run._test_description_function, ready_fn=lambda: None)
-            except TypeError:
-                # We also support generate_test_description functions without a ready_fn
-                inspect.getcallargs(run._test_description_function)
+            inspect.getcallargs(run._test_description_function)

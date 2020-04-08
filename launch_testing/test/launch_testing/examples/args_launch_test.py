@@ -23,6 +23,7 @@ import launch.actions
 import launch.substitutions
 
 import launch_testing
+import launch_testing.actions
 import launch_testing.util
 
 import pytest
@@ -44,7 +45,7 @@ dut_process = launch.actions.ExecuteProcess(
 
 
 @pytest.mark.launch_test
-def generate_test_description(ready_fn):
+def generate_test_description():
 
     return launch.LaunchDescription([
 
@@ -63,14 +64,14 @@ def generate_test_description(ready_fn):
         # provides a simple launch action that does this:
         launch_testing.util.KeepAliveProc(),
 
-        launch.actions.OpaqueFunction(function=lambda context: ready_fn())
+        launch_testing.actions.ReadyToTest()
     ])
 
 
 class TestTerminatingProcessStops(unittest.TestCase):
 
-    def test_proc_terminates(self):
-        self.proc_info.assertWaitForShutdown(process=dut_process, timeout=10)
+    def test_proc_terminates(self, proc_info):
+        proc_info.assertWaitForShutdown(process=dut_process, timeout=10)
 
 
 @launch_testing.post_shutdown_test()
@@ -83,17 +84,17 @@ class TestProcessOutput(unittest.TestCase):
             'Try running: launch_test test_with_args.test.py dut_arg:=arg'
         )
 
-    def test_arg_printed_in_output(self):
+    def test_arg_printed_in_output(self, proc_output, test_args):
         launch_testing.asserts.assertInStdout(
-            self.proc_output,
-            self.test_args['dut_arg'],
+            proc_output,
+            test_args['dut_arg'],
             dut_process
         )
 
-    def test_default_not_printed(self):
+    def test_default_not_printed(self, proc_output):
         with self.assertRaises(AssertionError):
             launch_testing.asserts.assertInStdout(
-                self.proc_output,
+                proc_output,
                 'default',
                 dut_process
             )

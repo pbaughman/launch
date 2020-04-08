@@ -22,6 +22,7 @@ import launch
 import launch.actions
 
 import launch_testing
+import launch_testing.actions
 import launch_testing.asserts
 import launch_testing.markers
 import launch_testing.tools
@@ -46,9 +47,9 @@ def get_test_process_action(*, args=[]):
 
 @pytest.mark.launch_test
 @launch_testing.markers.keep_alive
-def generate_test_description(ready_fn):
+def generate_test_description():
     return launch.LaunchDescription([
-        launch.actions.OpaqueFunction(function=lambda context: ready_fn()),
+        launch_testing.actions.ReadyToTest(),
     ])
 
 

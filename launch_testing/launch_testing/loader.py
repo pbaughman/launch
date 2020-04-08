@@ -15,76 +15,22 @@
 import functools
 import inspect
 import itertools
-import os
 import unittest
-import warnings
-
-from .actions import ReadyToTest
-
-
-# Patch up the warnings module to streamline the warning messages.  See
-# https://docs.python.org/3/library/warnings.html#warnings.showwarning
-def slim_formatwarning(msg, *args, **kwargs):
-    return 'Warning: ' + str(msg) + os.linesep
-
-
-warnings.formatwarning = slim_formatwarning
 
 
 def _normalize_ld(launch_description_fn):
     # A launch description fn can return just a launch description, or a tuple of
     # (launch_description, test_context).  This wrapper function normalizes things
     # so we always get a tuple, sometimes with an empty dictionary for the test_context
-    def normalize(result):
+    def wrapper():
+        result = launch_description_fn()
+
         if isinstance(result, tuple):
             return result
         else:
-            return result, {}
+            return (result, {})
 
-    def wrapper(**kwargs):
-
-        fn_args = inspect.getfullargspec(launch_description_fn)
-
-        if 'ready_fn' in fn_args.args + fn_args.kwonlyargs:
-            # This is an old-style launch_description function which expects ready_fn to be passed
-            # in to the function
-            # This type of launch description will be deprecated in the future.  Warn about it
-            # here
-            warnings.warn(
-                'Passing ready_fn as an argument to generate_test_description will '
-                'be removed in a future release.  Include a launch_testing.actions.ReadyToTest '
-                'action in the LaunchDescription instead.'
-            )
-            return normalize(launch_description_fn(**kwargs))
-        else:
-            # This is a new-style launch_description which should contain a ReadyToTest action
-            ready_fn = kwargs.pop('ready_fn')
-            result = normalize(launch_description_fn(**kwargs))
-            # Fish the ReadyToTest action out of the launch description and plumb our
-            # ready_fn to it
-
-            def iterate_ready_to_test_actions(entities):
-                """Recursively search LaunchDescription entities for all ReadyToTest actions."""
-                for entity in entities:
-                    if isinstance(entity, ReadyToTest):
-                        yield entity
-                    yield from iterate_ready_to_test_actions(
-                        entity.describe_sub_entities()
-                    )
-                    for conditional_sub_entity in entity.describe_conditional_sub_entities():
-                        yield from iterate_ready_to_test_actions(
-                            conditional_sub_entity[1]
-                        )
-
-            try:
-                ready_action = next(e for e in iterate_ready_to_test_actions(result[0].entities))
-            except StopIteration:  # No ReadyToTest action found
-                raise Exception(
-                    'generate_test_description functions without a ready_fn argument must return '
-                    'a LaunchDescription containing a ReadyToTest action'
-                )
-            ready_action._add_callback(ready_fn)
-            return result
+        return result
 
     return wrapper
 
@@ -124,20 +70,13 @@ class TestRun:
     def markers(self):
         return self._test_description_function.__markers__
 
-    def bind(self, tests, injected_attributes={}, injected_args={}):
+    def bind(self, tests, injected_args={}):
         """
         Bind injected_attributes and injected_args to tests.
 
-        Injected Attributes can be accessed from a test as self.name
         Injected Arguments can be accessed as an argument if the test has an argument with a
         matching name
         """
-        # Inject test attributes into the test as self.whatever.  This method of giving
-        # objects to the test is pretty inferior to injecting them as arguments to the
-        # test methods - we may deprecate this in favor of everything being an argument
-        for name, value in injected_attributes.items():
-            _give_attribute_to_tests(value, name, tests)
-
         # Give objects with matching names as arguments to tests.  This doesn't have the
         # weird scoping and name collision issues that the above method has.  In fact,
         # we give proc_info and proc_output to the tests as arguments too, so anything
@@ -151,7 +90,7 @@ class TestRun:
         This should only be used for the purposes of introspecting the launch description.  The
         returned launch description is not meant to be launched
         """
-        return self.normalized_test_description(ready_fn=lambda: None)[0]
+        return self.normalized_test_description()[0]
 
     def all_cases(self):
         yield from _iterate_tests_in_test_suite(self.pre_shutdown_tests)
@@ -255,26 +194,6 @@ def _partially_bind_matching_args(unbound_function, arg_candidates):
     # We only want to bind the part of the context matches the test args
     matching_args = {k: v for (k, v) in arg_candidates.items() if k in function_args}
     return functools.partial(unbound_function, **matching_args)
-
-
-def _give_attribute_to_tests(data, attr_name, test_suite):
-
-    def _warn_getter(self):
-        if not hasattr(self, '__warned'):
-            warnings.warn(
-                'Automatically adding attributes like self.{0} '
-                'to the test class will be deprecated in a future release.  '
-                'Instead, add {0} to the test method argument list to '
-                'access the test object you need'.format(attr_name)
-            )
-            setattr(self, '__warned', True)
-
-        return data
-
-    # The effect of this is that every test will have `self.attr_name` available to it so that
-    # it can interact with ROS2 or the process exit coes, or IO or whatever data we want
-    for cls in _iterate_test_classes_in_test_suite(test_suite):
-        setattr(cls, attr_name, property(fget=_warn_getter))
 
 
 def _iterate_test_classes_in_test_suite(test_suite):
