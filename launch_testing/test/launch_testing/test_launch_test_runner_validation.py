@@ -23,6 +23,9 @@ from launch_testing.loader import LoadTestsFromPythonModule
 from launch_testing.test_runner import LaunchTestRunner
 
 
+VALID_LAUNCH_DESCRIPTION = launch.LaunchDescription([ReadyToTest()])
+
+
 def make_test_run_for_dut(generate_test_description_function):
     module = imp.new_module('test_module')
     module.generate_test_description = generate_test_description_function
@@ -33,16 +36,11 @@ class TestLaunchTestRunnerValidation(unittest.TestCase):
 
     def test_catches_bad_signature(self):
 
-        # A `generate_test_description` function without a ready_fn argument is allowed because
-        # it might be a new style function that uses a ReadyToTest action to signal when it's time
-        # for tests to start.
-        # If there's no ReadyToTest action, we won't catch that until later because dut.validate()
-        # doesn't actually invoke the function.
-        # We will still expect to reject functions with wrong name arguments
-
+        # This is an older test, but still valid.  We don't have ready_fn anymore, but
+        # we can still check that we catch invalid arguments
         dut = LaunchTestRunner(
             make_test_run_for_dut(
-                lambda misspelled_ready_fn: None
+                lambda misspelled_ready_fn: VALID_LAUNCH_DESCRIPTION
             )
         )
 
@@ -51,7 +49,7 @@ class TestLaunchTestRunnerValidation(unittest.TestCase):
 
         dut = LaunchTestRunner(
             make_test_run_for_dut(
-                lambda: None
+                lambda: VALID_LAUNCH_DESCRIPTION
             )
         )
 
@@ -60,7 +58,7 @@ class TestLaunchTestRunnerValidation(unittest.TestCase):
     def test_too_many_arguments(self):
 
         dut = LaunchTestRunner(
-            make_test_run_for_dut(lambda extra_arg: None)
+            make_test_run_for_dut(lambda extra_arg: VALID_LAUNCH_DESCRIPTION)
         )
 
         with self.assertRaisesRegex(Exception, "unexpected extra argument 'extra_arg'"):
@@ -70,7 +68,7 @@ class TestLaunchTestRunnerValidation(unittest.TestCase):
 
         @launch_testing.parametrize('bad_argument', [1, 2, 3])
         def bad_launch_description():
-            pass  # pragma: no cover
+            return VALID_LAUNCH_DESCRIPTION  # pragma: no cover
 
         dut = LaunchTestRunner(
             make_test_run_for_dut(bad_launch_description)
@@ -97,26 +95,21 @@ class TestNewStyleTestDescriptions(unittest.TestCase):
             runs
         )
 
-        dut.validate()  # Make sure this passes initial validation (probably redundant with above)
-        runs[0].normalized_test_description()
+        dut.validate()
 
-    # TODO Pete: This test needs to be moved somewhere else.  Not having a ready_to_test action
-    # is checked when the test is run, not when the test description is invoked
-# def test_launch_description_with_missing_ready_action(self):
+    def test_launch_description_with_missing_ready_action(self):
 
-#     def generate_test_description():
-#         return launch.LaunchDescription([
-#         ])
+        def generate_test_description():
+            return launch.LaunchDescription([
+            ])
 
-#     runs = make_test_run_for_dut(generate_test_description)
-#     dut = LaunchTestRunner(
-#         runs
-#     )
+        runs = make_test_run_for_dut(generate_test_description)
+        dut = LaunchTestRunner(
+            runs
+        )
 
-#     dut.validate()  # Make sure this passes initial validation (probably redundant with above)
-
-#     with self.assertRaisesRegex(Exception, 'containing a ReadyToTest action'):
-#         runs[0].normalized_test_description()
+        with self.assertRaisesRegex(Exception, 'containing a ReadyToTest action'):
+            dut.validate()
 
     def test_launch_description_with_conditional_ready_action(self):
 
@@ -134,7 +127,6 @@ class TestNewStyleTestDescriptions(unittest.TestCase):
         )
 
         dut.validate()  # Make sure this passes initial validation (probably redundant with above)
-        runs[0].normalized_test_description()
 
     def test_launch_description_with_multiple_conditionals_and_deeper_nesting(self):
 
@@ -162,7 +154,6 @@ class TestNewStyleTestDescriptions(unittest.TestCase):
         )
 
         dut.validate()  # Make sure this passes initial validation (probably redundant with above)
-        runs[0].normalized_test_description()
 
     def test_parametrized_launch_description(self):
 
@@ -178,4 +169,3 @@ class TestNewStyleTestDescriptions(unittest.TestCase):
         )
 
         dut.validate()  # Make sure this passes initial validation (probably redundant with above)
-        runs[0].normalized_test_description()

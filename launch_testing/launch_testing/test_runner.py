@@ -35,6 +35,32 @@ class _LaunchDiedException(Exception):
     pass
 
 
+def get_ready_action_from_launch_description(launch_description):
+    """Iterate a launch description's entities and fish out the first ReadyToTest action."""
+    def iterate_ready_to_test_actions(entities):
+        """Recursively search LaunchDescription entities for all ReadyToTest actions."""
+        for entity in entities:
+            if isinstance(entity, ReadyToTest):
+                yield entity
+            yield from iterate_ready_to_test_actions(
+                entity.describe_sub_entities()
+            )
+            for conditional_sub_entity in entity.describe_conditional_sub_entities():
+                yield from iterate_ready_to_test_actions(
+                    conditional_sub_entity[1]
+                )
+
+    try:
+        ready_action = next(e for e in iterate_ready_to_test_actions(launch_description.entities))
+    except StopIteration:  # No ReadyToTest action found
+        raise Exception(
+            'The generate_test_description function must return a LaunchDescription '
+            'containing a ReadyToTest action'
+        )
+
+    return ready_action
+
+
 class _RunnerWorker():
 
     def __init__(self,
@@ -73,29 +99,7 @@ class _RunnerWorker():
         """
         test_ld, test_context = self._test_run.normalized_test_description()
 
-        # The launch description contains a ReadyToTest action used to delay the start
-        # of tests.
-        # Fish the ReadyToTest action out of the launch description and plumb our
-        # ready_fn to it
-        def iterate_ready_to_test_actions(entities):
-            """Recursively search LaunchDescription entities for all ReadyToTest actions."""
-            for entity in entities:
-                if isinstance(entity, ReadyToTest):
-                    yield entity
-                yield from iterate_ready_to_test_actions(
-                    entity.describe_sub_entities()
-                )
-                for conditional_sub_entity in entity.describe_conditional_sub_entities():
-                    yield from iterate_ready_to_test_actions(
-                        conditional_sub_entity[1]
-                    )
-
-        try:
-            ready_action = next(e for e in iterate_ready_to_test_actions(test_ld.entities))
-        except StopIteration:  # No ReadyToTest action found
-            raise Exception(
-                'No ReadyToTest action found in the launch description'
-            )
+        ready_action = get_ready_action_from_launch_description(test_ld)
         ready_action._add_callback(self._processes_launched.set)
 
         # Data that needs to be bound to the tests:
@@ -314,3 +318,8 @@ class LaunchTestRunner(object):
 
             # This is a double-check
             inspect.getcallargs(run._test_description_function)
+
+            # Make sure we can get the ReadyAction form the launch description
+            get_ready_action_from_launch_description(
+                run.normalized_test_description()[0]
+            )
